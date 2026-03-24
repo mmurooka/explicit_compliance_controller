@@ -1,3 +1,4 @@
 add_fsm_state_simple(ExplicitCompCtrl_Initial)
+add_fsm_state_simple(ExplicitCompCtrl_Compliant)
 
 add_fsm_data_directory(data)

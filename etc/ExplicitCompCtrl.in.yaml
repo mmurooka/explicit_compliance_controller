@@ -2,18 +2,18 @@
 # If true, the FSM transitions are managed by an external tool
 Managed: false
 # If true and the FSM is self-managed, transitions should be triggered
-StepByStep: true
+StepByStep: false
 # Change idle behaviour, if true the state is kept until transition,
 # otherwise the FSM holds the last state until transition
 IdleKeepState: false
 # Where to look for state libraries
 StatesLibraries:
-- "@MC_STATES_DEFAULT_RUNTIME_INSTALL_PREFIX@"
-- "@MC_STATES_RUNTIME_INSTALL_PREFIX@"
+  - "@MC_STATES_DEFAULT_RUNTIME_INSTALL_PREFIX@"
+  - "@MC_STATES_RUNTIME_INSTALL_PREFIX@"
 # Where to look for state files
 StatesFiles:
-- "@MC_STATES_DEFAULT_RUNTIME_INSTALL_PREFIX@/data"
-- "@MC_STATES_RUNTIME_INSTALL_PREFIX@/data"
+  - "@MC_STATES_DEFAULT_RUNTIME_INSTALL_PREFIX@/data"
+  - "@MC_STATES_RUNTIME_INSTALL_PREFIX@/data"
 # If true, state factory will be more verbose
 VerboseStateFactory: false
 # Additional robots to load
@@ -21,38 +21,46 @@ robots:
   ground:
     module: env/ground
 # General constraints, always on
-constraints:
-- type: contact
-- type: dynamics
-  damper: [0.1, 0.01, 0.5]
-- type: compoundJoint
+# constraints:
+# - type: contact
+# - type: dynamics
+#   damper: [0.1, 0.01, 0.5]
+# - type: compoundJoint
 # Collision constraint
 collisions:
-- type: collision
-  useMinimal: true
+  - type: collision
+    useMinimal: true
 # Initial set of contacts
-contacts:
-- r1: jvrc1
-  r2: ground
-  r1Surface: LeftFoot
-  r2Surface: AllGround
-- r1: jvrc1
-  r2: ground
-  r1Surface: RightFoot
-  r2Surface: AllGround
+# contacts:
+#   - r1: jvrc1
+#     r2: ground
+#     r1Surface: LeftFoot
+#     r2Surface: AllGround
+#   - r1: jvrc1
+#     r2: ground
+#     r1Surface: RightFoot
+#     r2Surface: AllGround
 
-# Some options for a specific robot
-jvrc1:
-  posture:
-    stiffness: 1
-    weight: 10
-  ff:
-    stiffness: 2
-    weight: 100
 # Implement some additional text states
 states: {}
 # Transitions map
 transitions:
-- [ExplicitCompCtrl_Initial, OK, ExplicitCompCtrl_Initial, Strict]
+  - [ExplicitCompCtrl_Initial, GoToCompliant, ExplicitCompCtrl_Compliant, Auto]
+  - [ExplicitCompCtrl_Compliant, GoToInitial, ExplicitCompCtrl_Initial, Auto]
 # Initial state
 init: ExplicitCompCtrl_Initial
+
+Plugins: [ExternalForcesEstimator]
+
+ObserverPipelines:
+  - name: Pipeline
+    observers:
+      - type: Encoder
+        config:
+          velocity: encoderVelocities
+
+kinova_bota_ds4:
+  tool_frame: "FT_sensor_wrench"
+
+panda_default:
+  tool_frame: "Arm"
