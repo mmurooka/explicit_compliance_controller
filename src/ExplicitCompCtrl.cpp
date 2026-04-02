@@ -140,6 +140,11 @@ void ExplicitCompCtrl::switchToInitialState()
 
 void ExplicitCompCtrl::switchToCompliantState()
 {
+  if(!datastore().call<bool>("EF_Estimator::isActive"))
+  {
+    datastore().call("EF_Estimator::toggleActive");
+  }
+
   auto basePostureTask = getPostureTask(robot().name());
   RobotDataMessage command;
   {
