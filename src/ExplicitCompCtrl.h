@@ -53,6 +53,7 @@ private:
   void handleCommandMessage(const std_msgs::msg::Float64MultiArray::SharedPtr msg);
   void applyPendingCommand();
   void applyCommandToTasks(const RobotDataMessage & command);
+  void updateInitialAutoTransition();
   void applyPostureCompliance();
   void applyEndEffectorCompliance();
   RobotDataMessage collectMeasuredData() const;
@@ -84,4 +85,5 @@ private:
   std::thread rosSpinThread_;
   size_t publishDecimation_ = 10;
   size_t runCounter_ = 0;
+  size_t initialConvergenceCount_ = 0;
 };

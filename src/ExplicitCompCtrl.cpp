@@ -1,6 +1,7 @@
 #include "ExplicitCompCtrl.h"
 #include <mc_rbdyn/Device.h>
 #include <mc_rbdyn/RobotFrame.h>
+#include <mc_rtc/constants.h>
 #include <mc_rtc/gui/Button.h>
 #include <mc_rtc/gui/Label.h>
 #include <mc_rtc/gui/NumberInput.h>
@@ -15,6 +16,7 @@
 #include <Eigen/src/Core/Matrix.h>
 #include <Eigen/src/Geometry/Quaternion.h>
 #include <array>
+#include <cmath>
 #include <memory>
 
 ExplicitCompCtrl::ExplicitCompCtrl(mc_rbdyn::RobotModulePtr rm, double dt, const mc_rtc::Configuration & config)
@@ -81,6 +83,7 @@ ExplicitCompCtrl::~ExplicitCompCtrl()
 bool ExplicitCompCtrl::run()
 {
   applyPendingCommand();
+  updateInitialAutoTransition();
   if(measuredPublisher_ && runCounter_ % publishDecimation_ == 0)
   {
     std_msgs::msg::Float64MultiArray msg;
@@ -131,6 +134,7 @@ void ExplicitCompCtrl::switchToInitialState()
   }
 
   datastore().assign<std::string>("ControlMode", "Position");
+  initialConvergenceCount_ = 0;
   requestState("Initial");
 }
 
@@ -250,6 +254,46 @@ void ExplicitCompCtrl::applyEndEffectorCompliance()
     }
     eeTask->setComplianceVector(compliance);
     endEffectorComplianceCurrent_ = endEffectorComplianceCommand_;
+  }
+}
+
+void ExplicitCompCtrl::updateInitialAutoTransition()
+{
+  if(requestedState() != "Initial" || datastore().get<std::string>("ControlMode") != "Position")
+  {
+    initialConvergenceCount_ = 0;
+    return;
+  }
+
+  RobotDataMessage command;
+  {
+    std::lock_guard<std::mutex> lock(commandMutex_);
+    command = commandedData_;
+  }
+
+  const auto measured = measuredPostureArray();
+  constexpr double threshold_rad = 10.0 * mc_rtc::constants::PI / 180.0;
+  bool converged = true;
+  for(size_t i = 0; i < measured.size(); ++i)
+  {
+    if(std::abs(measured[i] - command.posture[i]) >= threshold_rad)
+    {
+      converged = false;
+      break;
+    }
+  }
+
+  if(!converged)
+  {
+    initialConvergenceCount_ = 0;
+    return;
+  }
+
+  ++initialConvergenceCount_;
+  if(initialConvergenceCount_ >= 1000)
+  {
+    requestState("Compliant");
+    initialConvergenceCount_ = 0;
   }
 }
 

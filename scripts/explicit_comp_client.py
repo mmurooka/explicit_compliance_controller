@@ -143,8 +143,8 @@ if __name__ == "__main__":
     client = create_client()
     try:
         client.send_command(
-            ee_pos=np.array([0.6, 0.0, 0.4]),
-            ee_quat=np.array([0.5, -0.5, -0.5, -0.5]),
+            ee_pos=np.array([0.6, 0.0, 0.5]),
+            ee_quat=np.array([-0.5, 0.5, 0.5, 0.5]),
             posture=np.array([0.0, 0.262, 3.14, -2.269, 0.0, 0.96, 1.57]),
             ee_compliance=np.ones(6),
             posture_compliance=np.ones(7),
