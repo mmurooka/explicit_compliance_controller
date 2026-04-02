@@ -3,12 +3,19 @@
 #include <mc_control/fsm/Controller.h>
 #include <mc_tasks/CompliantEndEffectorTask.h>
 #include <mc_tasks/CompliantPostureTask.h>
+#include <std_msgs/msg/float64_multi_array.hpp>
+#include <rclcpp/rclcpp.hpp>
+
+#include <array>
+#include <mutex>
+#include <thread>
 
 #include "api.h"
 
 struct ExplicitCompCtrl_DLLAPI ExplicitCompCtrl : public mc_control::fsm::Controller
 {
   ExplicitCompCtrl(mc_rbdyn::RobotModulePtr rm, double dt, const mc_rtc::Configuration & config);
+  ~ExplicitCompCtrl() override;
 
   bool run() override;
 
@@ -25,20 +32,56 @@ struct ExplicitCompCtrl_DLLAPI ExplicitCompCtrl : public mc_control::fsm::Contro
   void endEffectorCompliance(double gamma);
   double endEffectorCompliance() const;
 
-  std::map<std::string, std::vector<double>> postureHome;
-
   std::shared_ptr<mc_tasks::CompliantEndEffectorTask> eeTask;
   std::shared_ptr<mc_tasks::CompliantPostureTask> postureTask;
 
   std::string tool_frame;
 
 private:
+  struct RobotDataMessage
+  {
+    std::array<double, 3> eePosition = {};
+    std::array<double, 4> eeQuaternion = {};
+    std::array<double, 7> posture = {};
+    std::array<double, 6> eeCompliance = {};
+    std::array<double, 7> postureCompliance = {};
+  };
+
   void addGui();
+  void setupRosInterface();
+  void stopRosInterface();
+  void handleCommandMessage(const std_msgs::msg::Float64MultiArray::SharedPtr msg);
+  void applyPendingCommand();
+  void applyCommandToTasks(const RobotDataMessage & command);
   void applyPostureCompliance();
   void applyEndEffectorCompliance();
+  RobotDataMessage collectMeasuredData() const;
+  std::vector<double> packRobotData(const RobotDataMessage & data) const;
+  bool unpackRobotData(const std::vector<double> & data, RobotDataMessage & unpacked) const;
+  std::map<std::string, std::vector<double>> postureTargetMap(const std::array<double, 7> & posture) const;
+  std::array<double, 7> measuredPostureArray() const;
+  sva::PTransformd measuredEndEffectorPose() const;
 
   mc_rtc::Configuration config_;
   std::string requestedState_ = "Initial";
   double postureCompliance_ = 1.0;
   double endEffectorCompliance_ = 1.0;
+  std::array<double, 7> postureComplianceCommand_ = {1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0};
+  std::array<double, 6> endEffectorComplianceCommand_ = {1.0, 1.0, 1.0, 1.0, 1.0, 1.0};
+  std::array<double, 7> postureComplianceCurrent_ = {1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0};
+  std::array<double, 6> endEffectorComplianceCurrent_ = {1.0, 1.0, 1.0, 1.0, 1.0, 1.0};
+  RobotDataMessage commandedData_;
+  mutable std::mutex commandMutex_;
+  bool hasPendingCommand_ = false;
+  std::vector<std::string> postureJointNames_ = {"joint_1", "joint_2", "joint_3", "joint_4",
+                                                 "joint_5", "joint_6", "joint_7"};
+  std::shared_ptr<rclcpp::Node> rosNode_;
+  rclcpp::Publisher<std_msgs::msg::Float64MultiArray>::SharedPtr measuredPublisher_;
+  rclcpp::Subscription<std_msgs::msg::Float64MultiArray>::SharedPtr commandSubscriber_;
+  rclcpp::CallbackGroup::SharedPtr rosCallbackGroup_;
+  std::shared_ptr<rclcpp::executors::SingleThreadedExecutor> rosExecutor_;
+  rclcpp::Context::SharedPtr rosContext_;
+  std::thread rosSpinThread_;
+  size_t publishDecimation_ = 10;
+  size_t runCounter_ = 0;
 };
