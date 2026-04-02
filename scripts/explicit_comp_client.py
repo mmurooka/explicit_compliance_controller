@@ -17,6 +17,7 @@ class RobotData:
     posture: np.ndarray # (7,) [j1-j7]
     ee_compliance: np.ndarray # (6,) [rx, ry, rz, tx, ty, tz]
     posture_compliance: np.ndarray # (7,) [j1-j7]
+    gripper_opening: np.ndarray # (1,)
 
 
 def _as_numpy(name: str, value: np.ndarray, size: int) -> np.ndarray:
@@ -32,27 +33,30 @@ def _pack_robot_data(
     posture: np.ndarray,
     ee_compliance: np.ndarray,
     posture_compliance: np.ndarray,
+    gripper_opening: np.ndarray,
 ) -> list:
     ee_pos = _as_numpy("ee_pos", ee_pos, 3)
     ee_quat = _as_numpy("ee_quat", ee_quat, 4)
     posture = _as_numpy("posture", posture, 7)
     ee_compliance = _as_numpy("ee_compliance", ee_compliance, 6)
     posture_compliance = _as_numpy("posture_compliance", posture_compliance, 7)
+    gripper_opening = _as_numpy("gripper_opening", gripper_opening, 1)
     return np.concatenate(
-        [ee_pos, ee_quat, posture, ee_compliance, posture_compliance]
+        [ee_pos, ee_quat, posture, ee_compliance, posture_compliance, gripper_opening]
     ).tolist()
 
 
 def _unpack_robot_data(data: np.ndarray) -> RobotData:
     array = np.asarray(data, dtype=np.float64)
-    if array.shape != (27,):
-        raise ValueError(f"robot data must have shape (27,), got {array.shape}")
+    if array.shape != (28,):
+        raise ValueError(f"robot data must have shape (28,), got {array.shape}")
     return RobotData(
         ee_pos=array[0:3].copy(),
         ee_quat=array[3:7].copy(),
         posture=array[7:14].copy(),
         ee_compliance=array[14:20].copy(),
         posture_compliance=array[20:27].copy(),
+        gripper_opening=array[27:28].copy(),
     )
 
 
@@ -81,6 +85,7 @@ class ExplicitCompClient(Node):
         posture: np.ndarray,
         ee_compliance: np.ndarray,
         posture_compliance: np.ndarray,
+        gripper_opening: np.ndarray,
     ) -> None:
         msg = Float64MultiArray()
         msg.data = _pack_robot_data(
@@ -89,6 +94,7 @@ class ExplicitCompClient(Node):
             posture=posture,
             ee_compliance=ee_compliance,
             posture_compliance=posture_compliance,
+            gripper_opening=gripper_opening,
         )
         self._publisher.publish(msg)
 
@@ -148,6 +154,7 @@ if __name__ == "__main__":
             posture=np.array([0.0, 0.262, 3.14, -2.269, 0.0, 0.96, 1.57]),
             ee_compliance=np.ones(6),
             posture_compliance=np.ones(7),
+            gripper_opening=np.array([1.0]),
         )
         measured = client.spin_until_measured(timeout_sec=1.0)
         print("ee_pos:", measured.ee_pos)
@@ -155,5 +162,6 @@ if __name__ == "__main__":
         print("posture:", measured.posture)
         print("ee_compliance:", measured.ee_compliance)
         print("posture_compliance:", measured.posture_compliance)
+        print("gripper_opening:", measured.gripper_opening)
     finally:
         shutdown_client(client)

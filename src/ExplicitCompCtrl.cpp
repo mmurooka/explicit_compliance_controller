@@ -42,6 +42,7 @@ ExplicitCompCtrl::ExplicitCompCtrl(mc_rbdyn::RobotModulePtr rm, double dt, const
   commandedData_.posture = {0.0, 0.262, 3.14, -2.269, 0.0, 0.96, 1.57};
   commandedData_.eeCompliance = endEffectorComplianceCommand_;
   commandedData_.postureCompliance = postureComplianceCommand_;
+  commandedData_.gripperOpening = 1.0;
 
   datastore().make<std::string>("ControlMode", "Position");
   datastore().make<std::string>("RequestedState", requestedState_);
@@ -358,7 +359,7 @@ void ExplicitCompCtrl::handleCommandMessage(const std_msgs::msg::Float64MultiArr
   RobotDataMessage unpacked;
   if(!unpackRobotData(msg->data, unpacked))
   {
-    mc_rtc::log::warning("[ExplicitCompCtrl] robot_command_data size mismatch: expected 27, got {}", msg->data.size());
+    mc_rtc::log::warning("[ExplicitCompCtrl] robot_command_data size mismatch: expected 28, got {}", msg->data.size());
     return;
   }
 
@@ -409,6 +410,11 @@ void ExplicitCompCtrl::applyCommandToTasks(const RobotDataMessage & command)
     quat.normalize();
     eeTask->orientationTask->orientation(quat.toRotationMatrix());
   }
+
+  if(!robot().grippers().empty())
+  {
+    robot().grippers().front().get().setTargetOpening(command.gripperOpening);
+  }
 }
 
 ExplicitCompCtrl::RobotDataMessage ExplicitCompCtrl::collectMeasuredData() const
@@ -422,24 +428,29 @@ ExplicitCompCtrl::RobotDataMessage ExplicitCompCtrl::collectMeasuredData() const
   measured.posture = measuredPostureArray();
   measured.eeCompliance = endEffectorComplianceCurrent_;
   measured.postureCompliance = postureComplianceCurrent_;
+  if(!robot().grippers().empty())
+  {
+    measured.gripperOpening = robot().grippers().front().get().opening();
+  }
   return measured;
 }
 
 std::vector<double> ExplicitCompCtrl::packRobotData(const RobotDataMessage & data) const
 {
   std::vector<double> packed;
-  packed.reserve(27);
+  packed.reserve(28);
   packed.insert(packed.end(), data.eePosition.begin(), data.eePosition.end());
   packed.insert(packed.end(), data.eeQuaternion.begin(), data.eeQuaternion.end());
   packed.insert(packed.end(), data.posture.begin(), data.posture.end());
   packed.insert(packed.end(), data.eeCompliance.begin(), data.eeCompliance.end());
   packed.insert(packed.end(), data.postureCompliance.begin(), data.postureCompliance.end());
+  packed.push_back(data.gripperOpening);
   return packed;
 }
 
 bool ExplicitCompCtrl::unpackRobotData(const std::vector<double> & data, RobotDataMessage & unpacked) const
 {
-  if(data.size() != 27)
+  if(data.size() != 28)
   {
     return false;
   }
@@ -464,6 +475,7 @@ bool ExplicitCompCtrl::unpackRobotData(const std::vector<double> & data, RobotDa
   {
     unpacked.postureCompliance[i] = data[offset++];
   }
+  unpacked.gripperOpening = data[offset++];
   return true;
 }
 

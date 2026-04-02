@@ -45,6 +45,7 @@ private:
     std::array<double, 7> posture = {};
     std::array<double, 6> eeCompliance = {};
     std::array<double, 7> postureCompliance = {};
+    double gripperOpening = 0.0;
   };
 
   void addGui();
