@@ -107,6 +107,28 @@ bool ExplicitCompCtrl::run()
 void ExplicitCompCtrl::reset(const mc_control::ControllerResetData & reset_data)
 {
   mc_control::fsm::Controller::reset(reset_data);
+
+  if(config_.has("gripper"))
+  {
+    mc_rtc::Configuration gripper_config = config_("gripper");
+    if(gripper_config.has("safety"))
+    {
+      mc_rtc::Configuration safety_config = gripper_config("safety");
+      if(safety_config.has("actualCommandDiffTrigger"))
+      {
+        safety_config.add("actualCommandDiffTrigger",
+                          mc_rtc::constants::toRad(static_cast<double>(safety_config("actualCommandDiffTrigger"))));
+      }
+      if(safety_config.has("releaseSafetyOffset"))
+      {
+        safety_config.add("releaseSafetyOffset",
+                          mc_rtc::constants::toRad(static_cast<double>(safety_config("releaseSafetyOffset"))));
+      }
+      gripper_config.add("safety", safety_config);
+    }
+    robot().gripper("gripper").configure(gripper_config);
+  }
+
   requestState("Initial");
 }
 
