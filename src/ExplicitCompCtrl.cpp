@@ -364,6 +364,10 @@ void ExplicitCompCtrl::handleCommandMessage(const std_msgs::msg::Float64MultiArr
   }
 
   std::lock_guard<std::mutex> lock(commandMutex_);
+  if(hasPendingCommand_)
+  {
+    mc_rtc::log::warning("[ExplicitCompCtrl] Overwriting pending robot_command_data before applyPendingCommand().");
+  }
   commandedData_ = unpacked;
   hasPendingCommand_ = true;
 }
