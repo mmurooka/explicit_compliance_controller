@@ -15,6 +15,7 @@
 #include <SpaceVecAlg/EigenTypedef.h>
 #include <Eigen/src/Core/Matrix.h>
 #include <Eigen/src/Geometry/Quaternion.h>
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <memory>
@@ -46,15 +47,6 @@ ExplicitCompCtrl::ExplicitCompCtrl(mc_rbdyn::RobotModulePtr rm, double dt, const
 
   datastore().make<std::string>("ControlMode", "Position");
   datastore().make<std::string>("RequestedState", requestedState_);
-  datastore().make_call("getPostureTask",
-                        [this]() -> mc_tasks::PostureTaskPtr
-                        {
-                          if(postureTask)
-                          {
-                            return postureTask;
-                          }
-                          return getPostureTask(robot().name());
-                        });
 
   addGui();
 
@@ -84,7 +76,7 @@ ExplicitCompCtrl::~ExplicitCompCtrl()
 bool ExplicitCompCtrl::run()
 {
   applyPendingCommand();
-  updateInitialAutoTransition();
+  updateStateServiceRequests();
   if(measuredPublisher_ && runCounter_ % publishDecimation_ == 0)
   {
     std_msgs::msg::Float64MultiArray msg;
@@ -257,6 +249,20 @@ void ExplicitCompCtrl::addGui()
                         [this](double gamma) { endEffectorCompliance(gamma); }, 0.0, 1.2));
 }
 
+void ExplicitCompCtrl::applyPostureTarget(const std::array<double, 7> & posture)
+{
+  if(postureTask)
+  {
+    postureTask->target(postureTargetMap(posture));
+  }
+
+  auto basePostureTask = getPostureTask(robot().name());
+  if(basePostureTask)
+  {
+    basePostureTask->target(postureTargetMap(posture));
+  }
+}
+
 void ExplicitCompCtrl::applyPostureCompliance()
 {
   if(postureTask)
@@ -285,14 +291,18 @@ void ExplicitCompCtrl::applyEndEffectorCompliance()
   }
 }
 
-void ExplicitCompCtrl::updateInitialAutoTransition()
+bool ExplicitCompCtrl::isInInitialMode() const
 {
-  if(requestedState() != "Initial" || datastore().get<std::string>("ControlMode") != "Position")
-  {
-    initialConvergenceCount_ = 0;
-    return;
-  }
+  return requestedState() == "Initial" && datastore().get<std::string>("ControlMode") == "Position";
+}
 
+bool ExplicitCompCtrl::isInCompliantMode() const
+{
+  return requestedState() == "Compliant" && datastore().get<std::string>("ControlMode") == "Torque";
+}
+
+bool ExplicitCompCtrl::isInitialTargetConverged() const
+{
   RobotDataMessage command;
   {
     std::lock_guard<std::mutex> lock(commandMutex_);
@@ -300,29 +310,77 @@ void ExplicitCompCtrl::updateInitialAutoTransition()
   }
 
   const auto measured = measuredPostureArray();
-  constexpr double threshold_rad = 10.0 * mc_rtc::constants::PI / 180.0;
-  bool converged = true;
+  constexpr double threshold_rad = mc_rtc::constants::toRad(10.0);
   for(size_t i = 0; i < measured.size(); ++i)
   {
     if(std::abs(measured[i] - command.posture[i]) >= threshold_rad)
     {
-      converged = false;
-      break;
+      return false;
     }
   }
+  return true;
+}
 
-  if(!converged)
+void ExplicitCompCtrl::finishStateServiceRequest(bool success, const std::string & message)
+{
+  std::lock_guard<std::mutex> lock(stateServiceMutex_);
+  pendingStateTransition_.completed = true;
+  pendingStateTransition_.active = false;
+  pendingStateTransition_.success = success;
+  pendingStateTransition_.message = message;
+  pendingStateTransition_.target = PendingStateTarget::None;
+  stateServiceCv_.notify_all();
+}
+
+void ExplicitCompCtrl::updateStateServiceRequests()
+{
+  PendingStateTransition transition;
   {
+    std::lock_guard<std::mutex> lock(stateServiceMutex_);
+    if(!pendingStateTransition_.active)
+    {
+      initialConvergenceCount_ = 0;
+      return;
+    }
+    transition = pendingStateTransition_;
+  }
+
+  if(transition.target == PendingStateTarget::Initial)
+  {
+    if(!isInInitialMode())
+    {
+      initialConvergenceCount_ = 0;
+      return;
+    }
+
+    if(!isInitialTargetConverged())
+    {
+      initialConvergenceCount_ = 0;
+      return;
+    }
+
+    ++initialConvergenceCount_;
+    if(initialConvergenceCount_ < 1000)
+    {
+      return;
+    }
+
     initialConvergenceCount_ = 0;
+    finishStateServiceRequest(true, "Controller reached the Initial target posture.");
     return;
   }
 
-  ++initialConvergenceCount_;
-  if(initialConvergenceCount_ >= 1000)
+  if(transition.target == PendingStateTarget::Compliant)
   {
-    requestState("Compliant");
     initialConvergenceCount_ = 0;
+    if(isInCompliantMode())
+    {
+      finishStateServiceRequest(true, "Controller is in Compliant state.");
+    }
+    return;
   }
+
+  initialConvergenceCount_ = 0;
 }
 
 void ExplicitCompCtrl::setupRosInterface()
@@ -335,6 +393,11 @@ void ExplicitCompCtrl::setupRosInterface()
   rosNode_ = std::make_shared<rclcpp::Node>("explicit_compliance_controller", options);
   rosCallbackGroup_ = rosNode_->create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
 
+  const auto default_posture = std::vector<double>(commandedData_.posture.begin(), commandedData_.posture.end());
+  rosNode_->declare_parameter<std::vector<double>>("target_posture", default_posture);
+  parameterCallbackHandle_ = rosNode_->add_on_set_parameters_callback(
+      [this](const std::vector<rclcpp::Parameter> & parameters) { return handleParameters(parameters); });
+
   rclcpp::SubscriptionOptions sub_options;
   sub_options.callback_group = rosCallbackGroup_;
   commandSubscriber_ = rosNode_->create_subscription<std_msgs::msg::Float64MultiArray>(
@@ -342,6 +405,16 @@ void ExplicitCompCtrl::setupRosInterface()
       [this](const std_msgs::msg::Float64MultiArray::SharedPtr msg) { handleCommandMessage(msg); }, sub_options);
   measuredPublisher_ =
       rosNode_->create_publisher<std_msgs::msg::Float64MultiArray>("robot_measured_data", rclcpp::QoS(1));
+  goToInitialService_ = rosNode_->create_service<std_srvs::srv::Trigger>(
+      "go_to_initial",
+      [this](const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
+             std::shared_ptr<std_srvs::srv::Trigger::Response> response) { handleGoToInitial(request, response); },
+      rmw_qos_profile_services_default, rosCallbackGroup_);
+  goToCompliantService_ = rosNode_->create_service<std_srvs::srv::Trigger>(
+      "go_to_compliant",
+      [this](const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
+             std::shared_ptr<std_srvs::srv::Trigger::Response> response) { handleGoToCompliant(request, response); },
+      rmw_qos_profile_services_default, rosCallbackGroup_);
 
   rclcpp::ExecutorOptions executor_options;
   executor_options.context = rosContext_;
@@ -366,6 +439,9 @@ void ExplicitCompCtrl::stopRosInterface()
   }
   commandSubscriber_.reset();
   measuredPublisher_.reset();
+  goToInitialService_.reset();
+  goToCompliantService_.reset();
+  parameterCallbackHandle_.reset();
   rosNode_.reset();
   rosExecutor_.reset();
   rosCallbackGroup_.reset();
@@ -374,6 +450,84 @@ void ExplicitCompCtrl::stopRosInterface()
     rosContext_->shutdown("ExplicitCompCtrl shutdown");
     rosContext_.reset();
   }
+}
+
+void ExplicitCompCtrl::handlePendingStateTransitionService(PendingStateTarget target,
+                                                           const std::string & state_name,
+                                                           std::shared_ptr<std_srvs::srv::Trigger::Response> response)
+{
+  std::unique_lock<std::mutex> lock(stateServiceMutex_);
+  if(pendingStateTransition_.active)
+  {
+    response->success = false;
+    response->message = "Another state transition service is already running.";
+    return;
+  }
+
+  pendingStateTransition_ = {};
+  pendingStateTransition_.target = target;
+  pendingStateTransition_.active = true;
+  requestState(state_name);
+
+  stateServiceCv_.wait(lock, [this]() { return pendingStateTransition_.completed; });
+  response->success = pendingStateTransition_.success;
+  response->message = pendingStateTransition_.message;
+  pendingStateTransition_ = {};
+}
+
+void ExplicitCompCtrl::handleGoToInitial(const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
+                                         std::shared_ptr<std_srvs::srv::Trigger::Response> response)
+{
+  (void)request;
+  handlePendingStateTransitionService(PendingStateTarget::Initial, "Initial", response);
+}
+
+void ExplicitCompCtrl::handleGoToCompliant(const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
+                                           std::shared_ptr<std_srvs::srv::Trigger::Response> response)
+{
+  (void)request;
+  handlePendingStateTransitionService(PendingStateTarget::Compliant, "Compliant", response);
+}
+
+rcl_interfaces::msg::SetParametersResult ExplicitCompCtrl::handleParameters(
+    const std::vector<rclcpp::Parameter> & parameters)
+{
+  rcl_interfaces::msg::SetParametersResult result;
+  result.successful = true;
+  result.reason = "success";
+
+  for(const auto & parameter : parameters)
+  {
+    if(parameter.get_name() != "target_posture")
+    {
+      continue;
+    }
+    if(parameter.get_type() != rclcpp::ParameterType::PARAMETER_DOUBLE_ARRAY)
+    {
+      result.successful = false;
+      result.reason = "target_posture must be a double array.";
+      return result;
+    }
+
+    const auto values = parameter.as_double_array();
+    if(values.size() != 7)
+    {
+      result.successful = false;
+      result.reason = "target_posture must have 7 elements.";
+      return result;
+    }
+
+    std::array<double, 7> posture = {};
+    std::copy(values.begin(), values.end(), posture.begin());
+    {
+      std::lock_guard<std::mutex> lock(commandMutex_);
+      commandedData_.posture = posture;
+    }
+    applyPostureTarget(posture);
+    mc_rtc::log::info("[ExplicitCompCtrl] Updated target_posture parameter.");
+  }
+
+  return result;
 }
 
 void ExplicitCompCtrl::handleCommandMessage(const std_msgs::msg::Float64MultiArray::SharedPtr msg)
@@ -414,7 +568,7 @@ void ExplicitCompCtrl::applyPendingCommand()
   applyEndEffectorCompliance();
 
   auto basePostureTask = getPostureTask(robot().name());
-  if(basePostureTask && datastore().get<std::string>("ControlMode") == "Position")
+  if(basePostureTask)
   {
     basePostureTask->target(postureTargetMap(local_command.posture));
   }

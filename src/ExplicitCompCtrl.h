@@ -4,11 +4,17 @@
 #include <mc_tasks/CompliantEndEffectorTask.h>
 #include <mc_tasks/CompliantPostureTask.h>
 #include <std_msgs/msg/float64_multi_array.hpp>
+#include <rcl_interfaces/msg/set_parameters_result.hpp>
 #include <rclcpp/rclcpp.hpp>
+#include <std_srvs/srv/trigger.hpp>
 
 #include <array>
+#include <condition_variable>
+#include <map>
 #include <mutex>
+#include <string>
 #include <thread>
+#include <vector>
 
 #include "api.h"
 
@@ -48,15 +54,44 @@ private:
     double gripperOpening = 0.0;
   };
 
+  enum class PendingStateTarget
+  {
+    None,
+    Initial,
+    Compliant,
+  };
+
+  struct PendingStateTransition
+  {
+    PendingStateTarget target = PendingStateTarget::None;
+    bool active = false;
+    bool completed = false;
+    bool success = false;
+    std::string message;
+  };
+
   void addGui();
   void setupRosInterface();
   void stopRosInterface();
   void handleCommandMessage(const std_msgs::msg::Float64MultiArray::SharedPtr msg);
   void applyPendingCommand();
   void applyCommandToTasks(const RobotDataMessage & command);
-  void updateInitialAutoTransition();
+  void updateStateServiceRequests();
+  void finishStateServiceRequest(bool success, const std::string & message);
+  bool isInInitialMode() const;
+  bool isInCompliantMode() const;
+  bool isInitialTargetConverged() const;
+  void applyPostureTarget(const std::array<double, 7> & posture);
   void applyPostureCompliance();
   void applyEndEffectorCompliance();
+  void handlePendingStateTransitionService(PendingStateTarget target,
+                                           const std::string & state_name,
+                                           std::shared_ptr<std_srvs::srv::Trigger::Response> response);
+  void handleGoToInitial(const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
+                         std::shared_ptr<std_srvs::srv::Trigger::Response> response);
+  void handleGoToCompliant(const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
+                           std::shared_ptr<std_srvs::srv::Trigger::Response> response);
+  rcl_interfaces::msg::SetParametersResult handleParameters(const std::vector<rclcpp::Parameter> & parameters);
   RobotDataMessage collectMeasuredData() const;
   std::vector<double> packRobotData(const RobotDataMessage & data) const;
   bool unpackRobotData(const std::vector<double> & data, RobotDataMessage & unpacked) const;
@@ -80,11 +115,17 @@ private:
   std::shared_ptr<rclcpp::Node> rosNode_;
   rclcpp::Publisher<std_msgs::msg::Float64MultiArray>::SharedPtr measuredPublisher_;
   rclcpp::Subscription<std_msgs::msg::Float64MultiArray>::SharedPtr commandSubscriber_;
+  rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr goToInitialService_;
+  rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr goToCompliantService_;
   rclcpp::CallbackGroup::SharedPtr rosCallbackGroup_;
+  rclcpp::node_interfaces::OnSetParametersCallbackHandle::SharedPtr parameterCallbackHandle_;
   std::shared_ptr<rclcpp::executors::SingleThreadedExecutor> rosExecutor_;
   rclcpp::Context::SharedPtr rosContext_;
   std::thread rosSpinThread_;
   size_t publishDecimation_ = 10;
   size_t runCounter_ = 0;
   size_t initialConvergenceCount_ = 0;
+  mutable std::mutex stateServiceMutex_;
+  std::condition_variable stateServiceCv_;
+  PendingStateTransition pendingStateTransition_;
 };

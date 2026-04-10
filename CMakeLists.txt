@@ -18,6 +18,9 @@ if(NOT TARGET mc_rtc::mc_control)
   find_package(mc_rtc REQUIRED)
 endif()
 
+find_package(std_srvs REQUIRED)
+find_package(rcl_interfaces REQUIRED)
+
 add_subdirectory(src)
 
 configure_file(etc/ExplicitCompCtrl.in.yaml

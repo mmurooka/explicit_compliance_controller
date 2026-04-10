@@ -9,8 +9,13 @@ set_target_properties(${PROJECT_NAME} PROPERTIES COMPILE_FLAGS
 if(NOT TARGET mc_rtc::mc_rtc_ros)
   message(FATAL_ERROR "mc_rtc ROS plugin is required to build this controller")
 endif()
-target_link_libraries(${PROJECT_NAME} PUBLIC mc_rtc::mc_control_fsm
-                                             mc_rtc::mc_rtc_ros)
+target_link_libraries(
+  ${PROJECT_NAME}
+  PUBLIC mc_rtc::mc_control_fsm
+         mc_rtc::mc_rtc_ros
+         std_srvs::std_srvs__rosidl_generator_cpp
+         std_srvs::std_srvs__rosidl_typesupport_cpp
+         rcl_interfaces::rcl_interfaces__rosidl_generator_cpp)
 install(
   TARGETS ${PROJECT_NAME}
   ARCHIVE DESTINATION "${MC_RTC_LIBDIR}"
