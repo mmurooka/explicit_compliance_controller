@@ -19,6 +19,7 @@
 #include <array>
 #include <cmath>
 #include <memory>
+#include <sstream>
 
 ExplicitCompCtrl::ExplicitCompCtrl(mc_rbdyn::RobotModulePtr rm, double dt, const mc_rtc::Configuration & config)
 : mc_control::fsm::Controller(rm, dt, config, Backend::TVM)
@@ -498,6 +499,43 @@ void ExplicitCompCtrl::handleGoToInitial(const std::shared_ptr<std_srvs::srv::Tr
                                          std::shared_ptr<std_srvs::srv::Trigger::Response> response)
 {
   (void)request;
+
+  RobotDataMessage command;
+  {
+    std::lock_guard<std::mutex> lock(commandMutex_);
+    command = commandedData_;
+  }
+  const auto measured = measuredPostureArray();
+  std::ostringstream measured_ss;
+  std::ostringstream target_ss;
+  measured_ss << "[";
+  target_ss << "[";
+  for(size_t i = 0; i < measured.size(); ++i)
+  {
+    if(i > 0)
+    {
+      measured_ss << ", ";
+      target_ss << ", ";
+    }
+    measured_ss << measured[i];
+    target_ss << command.posture[i];
+  }
+  measured_ss << "]";
+  target_ss << "]";
+
+  if(!robot().grippers().empty())
+  {
+    mc_rtc::log::info("[ExplicitCompCtrl] go_to_initial start. measured_posture={}, target_posture={}, "
+                      "measured_gripper_opening={}, target_gripper_opening={}",
+                      measured_ss.str(), target_ss.str(), robot().grippers().front().get().opening(),
+                      command.gripperOpening);
+  }
+  else
+  {
+    mc_rtc::log::info("[ExplicitCompCtrl] go_to_initial start. measured_posture={}, target_posture={}",
+                      measured_ss.str(), target_ss.str());
+  }
+
   handlePendingStateTransitionService(PendingStateTarget::Initial, "Initial", response);
 }
 
