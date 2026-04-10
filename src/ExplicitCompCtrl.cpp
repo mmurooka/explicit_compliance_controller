@@ -21,6 +21,28 @@
 #include <memory>
 #include <sstream>
 
+namespace
+{
+bool isContinuousPostureJointIndex(size_t index)
+{
+  return index == 0 || index == 2 || index == 4 || index == 6;
+}
+
+double wrapTargetNearCurrent(double target, double current)
+{
+  return current + std::atan2(std::sin(target - current), std::cos(target - current));
+}
+
+double postureDifference(double measured, double target, size_t index)
+{
+  if(isContinuousPostureJointIndex(index))
+  {
+    return std::atan2(std::sin(measured - target), std::cos(measured - target));
+  }
+  return measured - target;
+}
+} // namespace
+
 ExplicitCompCtrl::ExplicitCompCtrl(mc_rbdyn::RobotModulePtr rm, double dt, const mc_rtc::Configuration & config)
 : mc_control::fsm::Controller(rm, dt, config, Backend::TVM)
 {
@@ -322,7 +344,7 @@ bool ExplicitCompCtrl::isInitialTargetConverged() const
   constexpr double threshold_rad = mc_rtc::constants::toRad(10.0);
   for(size_t i = 0; i < measured.size(); ++i)
   {
-    if(std::abs(measured[i] - command.posture[i]) >= threshold_rad)
+    if(std::abs(postureDifference(measured[i], command.posture[i], i)) >= threshold_rad)
     {
       return false;
     }
@@ -722,9 +744,12 @@ std::map<std::string, std::vector<double>> ExplicitCompCtrl::postureTargetMap(
     const std::array<double, 7> & posture) const
 {
   std::map<std::string, std::vector<double>> target;
+  const auto measured = measuredPostureArray();
   for(size_t i = 0; i < postureJointNames_.size(); ++i)
   {
-    target[postureJointNames_[i]] = {posture[i]};
+    const double target_posture =
+        isContinuousPostureJointIndex(i) ? wrapTargetNearCurrent(posture[i], measured[i]) : posture[i];
+    target[postureJointNames_[i]] = {target_posture};
   }
   return target;
 }
