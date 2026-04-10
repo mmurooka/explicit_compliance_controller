@@ -81,7 +81,7 @@ private:
   bool isInInitialMode() const;
   bool isInCompliantMode() const;
   bool isInitialTargetConverged() const;
-  void applyPostureTarget(const std::array<double, 7> & posture);
+  void applyInitialTarget(const std::array<double, 7> & posture, double gripper_opening);
   void applyPostureCompliance();
   void applyEndEffectorCompliance();
   void handlePendingStateTransitionService(PendingStateTarget target,

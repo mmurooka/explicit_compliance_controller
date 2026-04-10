@@ -118,7 +118,10 @@ void ExplicitCompCtrl::reset(const mc_control::ControllerResetData & reset_data)
       }
       gripper_config.add("safety", safety_config);
     }
-    robot().gripper("gripper").configure(gripper_config);
+    if(!robot().grippers().empty())
+    {
+      robot().grippers().front().get().configure(gripper_config);
+    }
   }
 
   requestState("Initial");
@@ -249,7 +252,7 @@ void ExplicitCompCtrl::addGui()
                         [this](double gamma) { endEffectorCompliance(gamma); }, 0.0, 1.2));
 }
 
-void ExplicitCompCtrl::applyPostureTarget(const std::array<double, 7> & posture)
+void ExplicitCompCtrl::applyInitialTarget(const std::array<double, 7> & posture, double gripper_opening)
 {
   if(postureTask)
   {
@@ -260,6 +263,11 @@ void ExplicitCompCtrl::applyPostureTarget(const std::array<double, 7> & posture)
   if(basePostureTask)
   {
     basePostureTask->target(postureTargetMap(posture));
+  }
+
+  if(!robot().grippers().empty())
+  {
+    robot().grippers().front().get().setTargetOpening(gripper_opening);
   }
 }
 
@@ -314,6 +322,16 @@ bool ExplicitCompCtrl::isInitialTargetConverged() const
   for(size_t i = 0; i < measured.size(); ++i)
   {
     if(std::abs(measured[i] - command.posture[i]) >= threshold_rad)
+    {
+      return false;
+    }
+  }
+
+  if(!robot().grippers().empty())
+  {
+    constexpr double threshold_opening = 0.2;
+    const double measured_gripper_opening = robot().grippers().front().get().opening();
+    if(std::abs(measured_gripper_opening - command.gripperOpening) >= threshold_opening)
     {
       return false;
     }
@@ -393,7 +411,8 @@ void ExplicitCompCtrl::setupRosInterface()
   rosNode_ = std::make_shared<rclcpp::Node>("explicit_compliance_controller", options);
   rosCallbackGroup_ = rosNode_->create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
 
-  const auto default_posture = std::vector<double>(commandedData_.posture.begin(), commandedData_.posture.end());
+  auto default_posture = std::vector<double>(commandedData_.posture.begin(), commandedData_.posture.end());
+  default_posture.push_back(commandedData_.gripperOpening);
   rosNode_->declare_parameter<std::vector<double>>("target_posture", default_posture);
   parameterCallbackHandle_ = rosNode_->add_on_set_parameters_callback(
       [this](const std::vector<rclcpp::Parameter> & parameters) { return handleParameters(parameters); });
@@ -505,25 +524,27 @@ rcl_interfaces::msg::SetParametersResult ExplicitCompCtrl::handleParameters(
     if(parameter.get_type() != rclcpp::ParameterType::PARAMETER_DOUBLE_ARRAY)
     {
       result.successful = false;
-      result.reason = "target_posture must be a double array.";
+      result.reason = "target_posture must be a double array of length 8.";
       return result;
     }
 
     const auto values = parameter.as_double_array();
-    if(values.size() != 7)
+    if(values.size() != 8)
     {
       result.successful = false;
-      result.reason = "target_posture must have 7 elements.";
+      result.reason = "target_posture must have 8 elements.";
       return result;
     }
 
     std::array<double, 7> posture = {};
-    std::copy(values.begin(), values.end(), posture.begin());
+    std::copy(values.begin(), values.begin() + 7, posture.begin());
+    const double gripper_opening = values[7];
     {
       std::lock_guard<std::mutex> lock(commandMutex_);
       commandedData_.posture = posture;
+      commandedData_.gripperOpening = gripper_opening;
     }
-    applyPostureTarget(posture);
+    applyInitialTarget(posture, gripper_opening);
     mc_rtc::log::info("[ExplicitCompCtrl] Updated target_posture parameter.");
   }
 
