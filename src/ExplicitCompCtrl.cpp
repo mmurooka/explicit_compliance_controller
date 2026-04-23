@@ -152,11 +152,6 @@ void ExplicitCompCtrl::reset(const mc_control::ControllerResetData & reset_data)
 
 void ExplicitCompCtrl::switchToInitialState()
 {
-  if(!datastore().call<bool>("EF_Estimator::isActive"))
-  {
-    datastore().call("EF_Estimator::toggleActive");
-  }
-
   auto basePostureTask = getPostureTask(robot().name());
   RobotDataMessage command;
   {
@@ -186,6 +181,11 @@ void ExplicitCompCtrl::switchToInitialState()
 
 void ExplicitCompCtrl::switchToCompliantState()
 {
+  if(!datastore().call<bool>("EF_Estimator::isActive"))
+  {
+    datastore().call("EF_Estimator::toggleActive");
+  }
+
   auto basePostureTask = getPostureTask(robot().name());
   RobotDataMessage command;
   {
