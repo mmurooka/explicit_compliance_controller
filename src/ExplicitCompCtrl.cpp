@@ -108,11 +108,8 @@ bool ExplicitCompCtrl::run()
   }
   ++runCounter_;
 
-  const auto ctrl_mode = datastore().get<std::string>("ControlMode");
-  const bool is_transitioning_to_initial = requestedState() == "Initial" && ctrl_mode == "Torque";
-  const bool is_transitioning_to_compliant = requestedState() == "Compliant" && ctrl_mode == "Position";
-  const bool is_transitioning = is_transitioning_to_initial || is_transitioning_to_compliant;
-  if(ctrl_mode.compare("Position") == 0 && !is_transitioning)
+  auto ctrl_mode = datastore().get<std::string>("ControlMode");
+  if(ctrl_mode.compare("Position") == 0)
   {
     return mc_control::fsm::Controller::run(mc_solver::FeedbackType::OpenLoop);
   }
